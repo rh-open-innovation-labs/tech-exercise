@@ -1,0 +1,54 @@
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: gitea-webhook
+  labels:
+    app: gitea
+spec:
+  namespaceSelector: {}
+  resources: {}
+  serviceAccountName: pipeline
+  triggers:
+  - bindings:
+    - kind: TriggerBinding
+      ref: gitea-trigger-binding
+    interceptors:
+    - params:
+      - name: filter
+        # Filters for Gitea push events on the main branch
+        value: "header.match('X-Gitea-Event', 'push') && body.ref == 'refs/heads/main' && body.repository.full_name
+          == '{{ .Values.team }}/pet-battle-api'"
+      - name: overlays
+        value:
+        - expression: body.after.truncate(7)
+          key: truncated_sha
+        - expression: body.ref.split('/')[2]
+          key: branch_name
+        - expression: body.repository.name
+          key: app_of_apps_key
+      ref:
+        kind: ClusterInterceptor
+        name: cel
+    name: gitea-pet-battle-api-webhook-all-branches
+    template:
+      ref: gitea-pet-battle-api-trigger-template
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: webhook-gitea
+  labels:
+    app.kubernetes.io/managed-by: EventListener
+    app.kubernetes.io/part-of: Triggers
+    eventlistener: gitea-webhook
+spec:
+  port:
+    targetPort: http-listener
+  to:
+    kind: 'Service'
+    name: el-gitea-webhook
+    weight: 100
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
